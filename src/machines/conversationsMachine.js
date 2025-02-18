@@ -248,10 +248,13 @@ export const conversationsMachine = setup({
           on: {
             VIEW_CHAT_HISTORY: {
               target: 'viewingChatHistory',
-              actions: assign({
-                selectedConversation: ({ event }) => event.conversation,
-                selectedChatHistory: ({ event }) => event.conversation.currentChat.messages || []
-              })
+              actions: [
+                assign({
+                  selectedConversation: ({ event }) => event.conversation,
+                  selectedChatHistory: ({ event }) => event.conversation.currentChat?.messages || []
+                }),
+                ({ context }) => console.log('Selected conversation:', context.selectedConversation)
+              ]
             },
             CONTACT_HISTORY_CLICK: {
               target: 'history',
@@ -266,8 +269,10 @@ export const conversationsMachine = setup({
                     return conversation ? conversation.chatHistory : [];
                   },
                   selectedConversation: null,
-                  selectedChatHistory: []
-                })
+                  selectedChatHistory: [],
+                  selectedHistoryChat: null
+                }),
+                ({ context }) => console.log('Switched to history view:', context.historyConversations)
               ]
             }
           }
@@ -291,10 +296,14 @@ export const conversationsMachine = setup({
               })
             },
             VIEW_CHAT_HISTORY: {
-              actions: assign({
-                selectedHistoryChat: ({ event }) => event.conversation,
-                selectedChatHistory: ({ event }) => event.conversation.messages || []
-              })
+              actions: [
+                assign({
+                  selectedHistoryChat: ({ event }) => event.conversation,
+                  selectedChatHistory: ({ event }) => event.conversation.messages || [],
+                  selectedConversation: ({ event }) => event.conversation
+                }),
+                ({ context }) => console.log('Selected history chat:', context.selectedHistoryChat)
+              ]
             }
           }
         },
@@ -307,6 +316,15 @@ export const conversationsMachine = setup({
                 selectedChatHistory: [],
                 selectedHistoryChat: null
               })
+            },
+            VIEW_CHAT_HISTORY: {
+              actions: [
+                assign({
+                  selectedConversation: ({ event }) => event.conversation,
+                  selectedChatHistory: ({ event }) => event.conversation.currentChat?.messages || []
+                }),
+                ({ context }) => console.log('Switched to different chat:', context.selectedConversation)
+              ]
             },
             CONTACT_HISTORY_CLICK: {
               target: 'history',
@@ -321,7 +339,8 @@ export const conversationsMachine = setup({
                     return conversation ? conversation.chatHistory : [];
                   },
                   selectedConversation: null,
-                  selectedChatHistory: []
+                  selectedChatHistory: [],
+                  selectedHistoryChat: null
                 })
               ]
             },
