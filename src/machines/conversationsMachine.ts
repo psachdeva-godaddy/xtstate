@@ -1,5 +1,42 @@
 import { spawnChild, assign, setup, fromPromise } from 'xstate';
 import { chatStorage } from '../services/chatStorage';
+import { Message } from './types';
+
+export interface Conversation {
+  ucid: string;
+  state: string;
+  customerName: string;
+  customerId: string;
+  opened: string;
+  updated: string;
+}
+
+export interface HistoryConversation {
+  id: string;
+  date: string;
+  messages: Message[];
+  status: string;
+}
+
+interface ConversationsContext {
+  activeConversations: Conversation[];
+  historyConversations: HistoryConversation[];
+  error: Error | null;
+  view: 'active' | 'history';
+  selectedConversation: Conversation | null;
+  selectedChatHistory: Message[];
+  selectedCustomerId: string | null;
+  selectedHistoryChat: HistoryConversation | null;
+  conversationMessages: Record<string, Message[]>;
+}
+
+type ConversationsEvent =
+  | { type: 'UPDATE_ACTIVE_CONVERSATIONS'; conversations: Conversation[] }
+  | { type: 'UPDATE_CONVERSATION_MESSAGES'; conversationId: string; messages: Message[] }
+  | { type: 'VIEW_CHAT_HISTORY'; conversation: Conversation | HistoryConversation }
+  | { type: 'CONTACT_HISTORY_CLICK'; customerId: string }
+  | { type: 'CONTACT_HISTORY_BACK_CLICK' }
+  | { type: 'BACK_TO_LIST' };
 
 // Simplified mock data - only conversation card details
 const mockData = {
@@ -20,11 +57,11 @@ const mockData = {
       opened: new Date().toLocaleTimeString(),
       updated: new Date().toLocaleTimeString()
     }
-  ]
+  ] as Conversation[]
 };
 
 // Helper to get chat history for a customer
-const getCustomerHistory = (customerId) => {
+const getCustomerHistory = (customerId: string): HistoryConversation[] => {
   const allChats = chatStorage.getAllChats();
   const customerChats = Object.entries(allChats)
     .filter(([conversationId, messages]) => {
@@ -34,16 +71,20 @@ const getCustomerHistory = (customerId) => {
     })
     .map(([conversationId, messages]) => ({
       id: conversationId,
-      date: messages[0]?.timestamp || new Date().toISOString(),
-      messages,
+      date: (messages as Message[])[0]?.timestamp.toString() || new Date().toISOString(),
+      messages: messages as Message[],
       status: 'Completed'
     }))
-    .sort((a, b) => new Date(b.date) - new Date(a.date));
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   return customerChats;
 };
 
 export const conversationsMachine = setup({
+  types: {
+    context: {} as ConversationsContext,
+    events: {} as ConversationsEvent,
+  },
   actors: {
     fetchActiveConversations: fromPromise(async () => {
       console.log('Starting to fetch active conversations...');
@@ -51,7 +92,7 @@ export const conversationsMachine = setup({
       console.log('Fetched active conversations:', result);
       return result;
     }),
-    fetchHistoryConversations: fromPromise(async ({ input }) => {
+    fetchHistoryConversations: fromPromise(async ({ input }: { input: { customerId: string } }) => {
       console.log('Fetching history for customer:', input.customerId);
       const history = getCustomerHistory(input.customerId);
       console.log('Fetched history:', history);
@@ -80,9 +121,9 @@ export const conversationsMachine = setup({
           selectedConversation: ({ context, event }) => {
             if (!context.selectedConversation) return null;
             const updated = event.conversations.find(
-              conv => conv.ucid === context.selectedConversation.ucid
+              conv => conv.ucid === context.selectedConversation?.ucid
             );
-            return updated || context.selectedConversation;
+            return updated || null;
           }
         }),
         ({ context }) => console.log('Updated active conversations:', context.activeConversations)
@@ -132,7 +173,7 @@ export const conversationsMachine = setup({
         },
         onError: {
           actions: assign({
-            error: ({ event }) => event.error
+            error: ({ event }) => event.error instanceof Error ? event.error : new Error('Unknown error')
           })
         }
       }
@@ -155,9 +196,9 @@ export const conversationsMachine = setup({
               target: 'viewingChatHistory',
               actions: [
                 assign({
-                  selectedConversation: ({ event }) => event.conversation,
+                  selectedConversation: ({ event }) => event.conversation as Conversation,
                   selectedChatHistory: ({ event }) => {
-                    const storedMessages = chatStorage.getChat(event.conversation.ucid);
+                    const storedMessages = chatStorage.getChat((event.conversation as Conversation).ucid) as Message[];
                     return storedMessages;
                   }
                 }),
@@ -182,7 +223,7 @@ export const conversationsMachine = setup({
           invoke: {
             src: 'fetchHistoryConversations',
             input: ({ context }) => ({
-              customerId: context.selectedCustomerId
+              customerId: context.selectedCustomerId || ''
             }),
             onDone: {
               actions: assign({
@@ -191,7 +232,7 @@ export const conversationsMachine = setup({
             },
             onError: {
               actions: assign({
-                error: ({ event }) => event.error,
+                error: ({ event }) => event.error instanceof Error ? event.error : new Error('Unknown error'),
                 historyConversations: []
               })
             }
@@ -208,9 +249,9 @@ export const conversationsMachine = setup({
             VIEW_CHAT_HISTORY: {
               actions: [
                 assign({
-                  selectedHistoryChat: ({ event }) => event.conversation,
-                  selectedChatHistory: ({ event }) => event.conversation.messages || [],
-                  selectedConversation: ({ event }) => event.conversation
+                  selectedHistoryChat: ({ event }) => event.conversation as HistoryConversation,
+                  selectedChatHistory: ({ event }) => ((event.conversation as HistoryConversation).messages || []) as Message[],
+                  selectedConversation: ({ event }) => event.conversation as Conversation
                 }),
                 ({ context }) => console.log('Selected history chat:', context.selectedHistoryChat)
               ]
@@ -230,9 +271,9 @@ export const conversationsMachine = setup({
             VIEW_CHAT_HISTORY: {
               actions: [
                 assign({
-                  selectedConversation: ({ event }) => event.conversation,
+                  selectedConversation: ({ event }) => event.conversation as Conversation,
                   selectedChatHistory: ({ event }) => {
-                    const storedMessages = chatStorage.getChat(event.conversation.ucid);
+                    const storedMessages = chatStorage.getChat((event.conversation as Conversation).ucid) as Message[];
                     return storedMessages;
                   }
                 }),
@@ -251,49 +292,7 @@ export const conversationsMachine = setup({
             }
           }
         }
-      },
-      on: {
-        REFRESH: {
-          target: 'initializing',
-          actions: assign({
-            activeConversations: [],
-            historyConversations: [],
-            error: null
-          })
-        },
-        NEW_CONTACT: {
-          actions: assign({
-            activeConversations: ({ context }) => [
-              {
-                ucid: `new-${Date.now()}`,
-                state: 'NEW',
-                customerName: 'New Customer',
-                customerId: `new-${Date.now()}`,
-                opened: new Date().toLocaleTimeString(),
-                updated: new Date().toLocaleTimeString()
-              },
-              ...context.activeConversations
-            ]
-          })
-        },
-        CHANGE_STATUS: {
-          actions: [
-            assign({
-              activeConversations: ({ context, event }) => {
-                if (event.status === 'CLOSED' || event.status === 'COMPLETED') {
-                  return context.activeConversations.filter(conv => conv.ucid !== event.ucid);
-                }
-                return context.activeConversations.map(conv => 
-                  conv.ucid === event.ucid 
-                    ? { ...conv, state: event.status, updated: new Date().toLocaleTimeString() }
-                    : conv
-                );
-              }
-            }),
-            ({ context, event }) => console.log(`Status changed to ${event.status} for conversation ${event.ucid}`)
-          ]
-        }
       }
     }
   }
-});
+}); 

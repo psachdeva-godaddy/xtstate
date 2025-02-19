@@ -1,7 +1,19 @@
 import React from 'react';
+import { Conversation, HistoryConversation } from '../machines/conversationsMachine';
 import './ConversationsList.css';
 
-const NavigationList = ({ 
+interface NavigationListProps {
+  conversations: Conversation[];
+  onStatusChange: (conversationId: string, status: string) => void;
+  onViewChat: (conversation: Conversation | HistoryConversation) => void;
+  onViewHistory: (customerId: string) => void;
+  selectedConversation: Conversation | null;
+  isHistoryView: boolean;
+  historyConversations: HistoryConversation[];
+  onBackToActive: () => void;
+}
+
+const NavigationList: React.FC<NavigationListProps> = ({ 
   conversations, 
   onStatusChange, 
   onViewChat, 
@@ -32,7 +44,7 @@ const NavigationList = ({
               historyConversations.map((chat) => (
                 <div 
                   key={chat.id} 
-                  className={`conversation-card ${selectedConversation?.customerId === chat.customerId ? 'active' : ''}`}
+                  className={`conversation-card ${selectedConversation?.customerId === chat.id ? 'active' : ''}`}
                   onClick={() => onViewChat({
                     ...chat,
                     ucid: chat.id,
@@ -45,7 +57,7 @@ const NavigationList = ({
                   <div className="history-preview">
                     {chat.messages && chat.messages.length > 0 && (
                       <div className="preview-message">
-                        <span className="message-text">{chat.messages[0].message}</span>
+                        <span className="message-text">{chat.messages[0].content}</span>
                         <span className="message-count">{chat.messages.length} messages</span>
                       </div>
                     )}
@@ -96,7 +108,21 @@ const NavigationList = ({
   );
 };
 
-const ConversationsList = ({ 
+interface ConversationsListProps {
+  activeConversations: Conversation[];
+  historyConversations: HistoryConversation[];
+  selectedConversation: Conversation | null;
+  view: 'active' | 'history';
+  onStatusChange: (conversationId: string, status: string) => void;
+  onViewChat: (conversation: Conversation | HistoryConversation) => void;
+  onViewHistory: (customerId: string) => void;
+  onBackToActive: () => void;
+  onRefresh: () => void;
+  onNewContact: () => void;
+  error: Error | null;
+}
+
+const ConversationsList: React.FC<ConversationsListProps> = ({ 
   activeConversations, 
   historyConversations, 
   selectedConversation,
@@ -142,7 +168,7 @@ const ConversationsList = ({
       />
       {error && (
         <div className="error-message">
-          Error: {error}
+          Error: {error.message || 'Unknown error'}
         </div>
       )}
     </>

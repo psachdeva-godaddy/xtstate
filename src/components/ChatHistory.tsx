@@ -1,7 +1,19 @@
-import React, { useState } from 'react';
+import React, { useState, FormEvent } from 'react';
+import { Message } from '../machines/types';
+import { Conversation, HistoryConversation } from '../machines/conversationsMachine';
 import './ConversationsList.css';
 
-const ChatHistory = ({ 
+interface ChatHistoryProps {
+  conversation: Conversation | HistoryConversation;
+  chatHistory: Message[];
+  onBack: () => void;
+  onSendMessage?: (message: string) => void;
+  isHistoryView: boolean;
+  isProcessing: boolean;
+  error: Error | null;
+}
+
+const ChatHistory: React.FC<ChatHistoryProps> = ({ 
   conversation, 
   chatHistory, 
   onBack, 
@@ -12,12 +24,29 @@ const ChatHistory = ({
 }) => {
   const [newMessage, setNewMessage] = useState('');
 
-  const handleSend = (e) => {
+  const handleSend = (e: FormEvent) => {
     e.preventDefault();
-    if (newMessage.trim()) {
+    if (newMessage.trim() && onSendMessage) {
       onSendMessage(newMessage);
       setNewMessage('');
     }
+  };
+
+  const getCustomerName = (conv: Conversation | HistoryConversation) => {
+    if ('customerName' in conv) {
+      return conv.customerName;
+    }
+    // For history conversations, we might want to extract the name from somewhere else
+    // or use a placeholder
+    return 'Customer';
+  };
+
+  const getCustomerId = (conv: Conversation | HistoryConversation) => {
+    if ('customerId' in conv) {
+      return conv.customerId;
+    }
+    // For history conversations, we might want to use the id field
+    return conv.id;
   };
 
   return (
@@ -27,10 +56,10 @@ const ChatHistory = ({
           Back to List
         </button>
         <div className="chat-customer-info">
-          <h2>{conversation.customerName}</h2>
+          <h2>{getCustomerName(conversation)}</h2>
           <div className="chat-customer-details">
-            <span>ID: {conversation.customerId}</span>
-            <span>Status: {conversation.state}</span>
+            <span>ID: {getCustomerId(conversation)}</span>
+            <span>Status: {'state' in conversation ? conversation.state : conversation.status}</span>
           </div>
         </div>
       </div>
@@ -39,11 +68,13 @@ const ChatHistory = ({
         {chatHistory.map((chat) => (
           <div 
             key={chat.id} 
-            className={`chat-message ${chat.sender === 'customer' ? 'customer' : 'agent'}`}
+            className={`chat-message ${chat.sender === 'user' ? 'customer' : 'agent'}`}
           >
             <div className="message-content">
-              <p>{chat.content || chat.message}</p>
-              <span className="message-time">{chat.timestamp}</span>
+              <p>{chat.content}</p>
+              <span className="message-time">
+                {new Date(chat.timestamp).toLocaleTimeString()}
+              </span>
               {chat.source && (
                 <div className="message-source">
                   Source: <a href={chat.source} target="_blank" rel="noopener noreferrer">{chat.source}</a>

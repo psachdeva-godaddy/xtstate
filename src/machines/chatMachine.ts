@@ -1,9 +1,50 @@
 import { setup, assign, fromPromise } from 'xstate';
 import { chatStorage } from '../services/chatStorage';
+import { Message } from './types';
 
 const GRAPHQL_ENDPOINT = '/graphql';
 
-const sendGraphQLMessage = async (message) => {
+interface ChatContext {
+  messages: Message[];
+  currentInput: string;
+  error: Error | null;
+  isProcessing: boolean;
+  conversationId: string | null;
+  onConversationUpdate: ((update: ConversationUpdate) => void) | null;
+}
+
+interface ConversationUpdate {
+  type: 'CHAT_UPDATED';
+  conversationId: string;
+  messages: Message[];
+  lastMessage: Message;
+  timestamp: string;
+}
+
+interface GraphQLResponse {
+  data: {
+    sendMessage: {
+      messages: Array<{
+        type: string;
+        text: string;
+        by: string;
+      }>;
+      state: string;
+      commands: Array<{
+        type: string;
+        payload: any;
+        by: string;
+      }>;
+      metadata: any;
+    };
+  };
+}
+
+type ChatEvent =
+  | { type: 'CONVERSATION_SELECTED'; conversationId: string }
+  | { type: 'RECEIVED_INPUT'; message: string };
+
+const sendGraphQLMessage = async (message: string): Promise<{ text: string; source: null }> => {
   const mutation = {
     query: `
       mutation {
@@ -67,12 +108,12 @@ const sendGraphQLMessage = async (message) => {
       console.error('Response not OK:', {
         status: response.status,
         statusText: response.statusText,
-        headers: Object.fromEntries([...response.headers])
+        headers: Array.from(response.headers.entries())
       });
       throw new Error(`Network response was not ok: ${response.status} ${response.statusText}`);
     }
 
-    const data = await response.json();
+    const data: GraphQLResponse = await response.json();
     console.log('Response data:', data);
     const assistantMessage = data.data.sendMessage.messages.find(msg => msg.by === 'assistant');
     
@@ -82,32 +123,36 @@ const sendGraphQLMessage = async (message) => {
     };
   } catch (error) {
     console.error('GraphQL request failed:', error);
-    throw new Error(`Failed to fetch response: ${error.message}`);
+    throw new Error(`Failed to fetch response: ${error instanceof Error ? error.message : String(error)}`);
   }
 };
 
-const createMessage = (content, sender, source = null) => ({
+const createMessage = (content: string, sender: 'user' | 'assistant', source: string | null = null): Message => ({
   id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
   content,
   sender,
   source,
-  timestamp: new Date().toISOString()
+  timestamp: Date.now()
 });
 
 export const chatMachine = setup({
+  types: {
+    context: {} as ChatContext,
+    events: {} as ChatEvent,
+  },
   actors: {
-    fetchResponse: fromPromise(async ({ input }) => {
+    fetchResponse: fromPromise(async ({ input }: { input: { message: string } }) => {
       const response = await sendGraphQLMessage(input.message);
       return response;
     }),
-    loadStoredMessages: fromPromise(async ({ input }) => {
+    loadStoredMessages: fromPromise(async ({ input }: { input: { conversationId: string } }) => {
       const messages = chatStorage.getChat(input.conversationId);
       return { messages };
     })
   },
   actions: {
-    notifyConversationUpdate: ({ context, event }) => {
-      if (context.onConversationUpdate) {
+    notifyConversationUpdate: ({ context }) => {
+      if (context.onConversationUpdate && context.conversationId) {
         context.onConversationUpdate({
           type: 'CHAT_UPDATED',
           conversationId: context.conversationId,
@@ -145,25 +190,26 @@ export const chatMachine = setup({
       on: {
         CONVERSATION_SELECTED: {
           target: 'loading_messages',
-          actions: ['clearMessages'] // Clear messages before loading new conversation
+          actions: ['clearMessages']
         }
       }
     },
     loading_messages: {
       entry: assign({
-        conversationId: ({ event }) => event.conversationId,
-        messages: [] // Clear messages on entry
+        conversationId: ({ event }) => 
+          'conversationId' in event ? event.conversationId : null,
+        messages: []
       }),
       invoke: {
         src: 'loadStoredMessages',
-        input: ({ context, event }) => ({
-          conversationId: event.conversationId
+        input: ({ event }) => ({
+          conversationId: 'conversationId' in event ? event.conversationId : ''
         }),
         onDone: {
           target: 'awaiting_input',
           actions: [
             assign({
-              messages: ({ event }) => event.output.messages || [],
+              messages: ({ event }) => (event.output.messages || []) as Message[],
               error: null,
               currentInput: '',
               isProcessing: false
@@ -174,7 +220,7 @@ export const chatMachine = setup({
         onError: {
           target: 'awaiting_input',
           actions: assign({
-            error: ({ event }) => event.error,
+            error: ({ event }) => event.error instanceof Error ? event.error : new Error('Unknown error'),
             messages: []
           })
         }
@@ -231,7 +277,7 @@ export const chatMachine = setup({
           target: 'awaiting_input',
           actions: [
             assign({
-              error: ({ event }) => event.error,
+              error: ({ event }) => event.error instanceof Error ? event.error : new Error('Unknown error'),
               isProcessing: false
             }),
             'notifyConversationUpdate'
@@ -249,23 +295,4 @@ export const chatMachine = setup({
       }
     }
   }
-});
-
-export const chatEvents = {
-  sendMessage: (message) => ({
-    type: 'RECEIVED_INPUT',
-    message
-  }),
-  endStreaming: () => ({
-    type: 'END_STREAMING'
-  }),
-  selectConversation: (conversationId, messages = []) => ({
-    type: 'CONVERSATION_SELECTED',
-    conversationId,
-    messages: messages.map(msg => ({
-      ...msg,
-      content: msg.content || msg.message,
-      message: undefined
-    }))
-  })
-};
+}); 

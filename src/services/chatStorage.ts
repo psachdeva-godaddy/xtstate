@@ -1,8 +1,14 @@
+import { Message } from '../machines/types';
+
+interface ChatStore {
+  [conversationId: string]: Message[];
+}
+
 const CHAT_STORAGE_KEY = 'chat_messages_store';
 
 export const chatStorage = {
   // Get all stored chats
-  getAllChats: () => {
+  getAllChats: (): ChatStore => {
     try {
       const stored = localStorage.getItem(CHAT_STORAGE_KEY);
       return stored ? JSON.parse(stored) : {};
@@ -13,10 +19,10 @@ export const chatStorage = {
   },
 
   // Get messages for a specific conversation
-  getChat: (conversationId) => {
+  getChat: (conversationId: string): Message[] => {
     try {
       const stored = localStorage.getItem(CHAT_STORAGE_KEY);
-      const chats = stored ? JSON.parse(stored) : {};
+      const chats: ChatStore = stored ? JSON.parse(stored) : {};
       return chats[conversationId] || [];
     } catch (error) {
       console.error('Error reading chat:', error);
@@ -25,10 +31,10 @@ export const chatStorage = {
   },
 
   // Update messages for a specific conversation
-  updateChat: (conversationId, messages) => {
+  updateChat: (conversationId: string, messages: Message[]): boolean => {
     try {
       const stored = localStorage.getItem(CHAT_STORAGE_KEY);
-      const chats = stored ? JSON.parse(stored) : {};
+      const chats: ChatStore = stored ? JSON.parse(stored) : {};
       chats[conversationId] = messages;
       localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(chats));
       return true;
@@ -39,7 +45,7 @@ export const chatStorage = {
   },
 
   // Clear all stored chats
-  clearAll: () => {
+  clearAll: (): boolean => {
     try {
       localStorage.removeItem(CHAT_STORAGE_KEY);
       return true;

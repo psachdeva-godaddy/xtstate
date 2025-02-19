@@ -1,8 +1,20 @@
 import React from 'react';
 import ChatHistory from './ChatHistory';
+import { Message } from '../machines/types';
+import { Conversation, HistoryConversation } from '../machines/conversationsMachine';
 import './ChatView.css';
 
-const ChatView = ({ 
+interface ChatViewProps {
+  selectedConversation: Conversation | HistoryConversation | null;
+  chatHistory: Message[];
+  view: 'active' | 'history';
+  onBack: () => void;
+  onSendMessage?: (message: string) => void;
+  isProcessing: boolean;
+  error: Error | null;
+}
+
+const ChatView: React.FC<ChatViewProps> = ({ 
   selectedConversation,
   chatHistory,
   view,

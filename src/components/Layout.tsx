@@ -1,26 +1,46 @@
 import React, { useCallback, useEffect } from 'react';
 import { useMachine } from '@xstate/react';
-import { conversationsMachine } from '../machines/conversationsMachine';
-import { chatMachine, chatEvents } from '../machines/chatMachine';
+import { conversationsMachine, Conversation, HistoryConversation } from '../machines/conversationsMachine';
+import { chatMachine } from '../machines/chatMachine';
 import { chatStorage } from '../services/chatStorage';
+import { Message } from '../machines/types';
 import ConversationsList from './ConversationsList';
 import ChatView from './ChatView';
 import './Layout.css';
 
-const Layout = () => {
-  const [conversationsSnapshot, sendToConversations] = useMachine(conversationsMachine);
-  const [chatSnapshot, sendToChat] = useMachine(chatMachine, {
-    context: {
-      onConversationUpdate: ({ conversationId, messages }) => {
-        // Update conversations machine with new messages
-        sendToConversations({ 
-          type: 'UPDATE_CONVERSATION_MESSAGES', 
-          conversationId, 
-          messages 
-        });
-      }
+// Mock data for active conversations
+const mockData = {
+  active: [
+    {
+      ucid: "123e4567-56-426614174000",
+      state: "IN_PROGRESS",
+      customerName: "John Doe",
+      customerId: "1234",
+      opened: new Date().toLocaleTimeString(),
+      updated: new Date().toLocaleTimeString()
+    },
+    {
+      ucid: "123e4567-56-426614171000",
+      state: "IN_PROGRESS",
+      customerName: "Pranav Sachdeva",
+      customerId: "1235",
+      opened: new Date().toLocaleTimeString(),
+      updated: new Date().toLocaleTimeString()
     }
-  });
+  ] as Conversation[]
+};
+
+interface CurrentChat {
+  messages: Message[];
+}
+
+interface ConversationWithChat extends Conversation {
+  currentChat?: CurrentChat;
+}
+
+const Layout: React.FC = () => {
+  const [conversationsSnapshot, sendToConversations] = useMachine(conversationsMachine);
+  const [chatSnapshot, sendToChat] = useMachine(chatMachine);
 
   // Initialize conversations with stored messages
   useEffect(() => {
@@ -32,7 +52,6 @@ const Layout = () => {
           return {
             ...conv,
             currentChat: {
-              ...conv.currentChat,
               messages: storedMessages
             }
           };
@@ -68,11 +87,12 @@ const Layout = () => {
     storedChats: chatStorage.getAllChats()
   });
 
-  const handleStatusChange = (ucid, status) => {
-    sendToConversations({ type: 'CHANGE_STATUS', ucid, status });
+  const handleStatusChange = (ucid: string, status: string) => {
+    // Status change is not currently supported in the state machine
+    console.log('Status change not implemented:', { ucid, status });
   };
 
-  const handleViewHistory = (customerId) => {
+  const handleViewHistory = (customerId: string) => {
     console.log('Viewing history for customer:', customerId);
     sendToConversations({ type: 'CONTACT_HISTORY_CLICK', customerId });
   };
@@ -81,32 +101,28 @@ const Layout = () => {
     sendToConversations({ type: 'CONTACT_HISTORY_BACK_CLICK' });
   };
 
-  const handleViewChat = (conversation) => {
+  const handleViewChat = (conversation: Conversation | HistoryConversation) => {
     console.log('Viewing chat:', conversation);
     
     // First update conversations machine
     sendToConversations({ 
       type: 'VIEW_CHAT_HISTORY', 
-      conversation: {
-        ...conversation,
-        currentChat: view === 'history' ? 
-          { messages: conversation.messages } : 
-          conversation.currentChat
-      }
+      conversation
     });
     
     // Then update chat machine with the conversation
-    const storedMessages = chatStorage.getChat(conversation.ucid);
+    const conversationId = 'ucid' in conversation ? conversation.ucid : conversation.id;
+    const storedMessages = chatStorage.getChat(conversationId);
     const messages = storedMessages.length > 0 ? 
       storedMessages : 
-      (view === 'history' ? 
+      (view === 'history' && 'messages' in conversation ? 
         conversation.messages : 
-        (conversation.currentChat?.messages || []));
+        []);
     
-    sendToChat(chatEvents.selectConversation(
-      conversation.ucid,
-      messages
-    ));
+    sendToChat({ 
+      type: 'CONVERSATION_SELECTED',
+      conversationId
+    });
   };
 
   const handleBackToList = () => {
@@ -114,18 +130,41 @@ const Layout = () => {
     sendToConversations({ type: 'BACK_TO_LIST' });
   };
 
-  const handleSendMessage = useCallback((message) => {
-    sendToChat(chatEvents.sendMessage(message));
+  const handleSendMessage = useCallback((message: string) => {
+    sendToChat({ type: 'RECEIVED_INPUT', message });
   }, [sendToChat]);
 
   const handleRefresh = () => {
     // Clear stored chats when refreshing
     chatStorage.clearAll();
-    sendToConversations({ type: 'REFRESH' });
+    // Fetch active conversations again
+    sendToConversations({ 
+      type: 'UPDATE_ACTIVE_CONVERSATIONS', 
+      conversations: mockData.active 
+    });
   };
 
   const handleNewContact = () => {
-    sendToConversations({ type: 'NEW_CONTACT' });
+    const newConversation: Conversation = {
+      ucid: `new_${Date.now()}`,
+      state: 'NEW',
+      customerName: 'New Contact',
+      customerId: `cust_${Date.now()}`,
+      opened: new Date().toLocaleTimeString(),
+      updated: new Date().toLocaleTimeString()
+    };
+
+    // Add the new conversation to active conversations
+    sendToConversations({ 
+      type: 'UPDATE_ACTIVE_CONVERSATIONS',
+      conversations: [...activeConversations, newConversation]
+    });
+
+    // Select the new conversation
+    sendToConversations({ 
+      type: 'VIEW_CHAT_HISTORY',
+      conversation: newConversation
+    });
   };
 
   if (conversationsSnapshot.matches('initializing')) {
@@ -137,11 +176,11 @@ const Layout = () => {
   // Use chat machine messages if available, otherwise use stored messages
   const currentChatHistory = chatSnapshot.context.messages.length > 0 ? 
     chatSnapshot.context.messages : 
-    (currentConversation?.ucid ? 
-      chatStorage.getChat(currentConversation.ucid) : 
-      (view === 'history' ? 
-        (selectedHistoryChat?.messages || []) : 
-        (selectedChatHistory || [])));
+    (currentConversation ? 
+      ('ucid' in currentConversation ? 
+        chatStorage.getChat(currentConversation.ucid) : 
+        currentConversation.messages) : 
+      []);
 
   const isProcessing = chatSnapshot.context.isProcessing;
 
@@ -151,7 +190,7 @@ const Layout = () => {
         <ConversationsList 
           activeConversations={activeConversations}
           historyConversations={historyConversations}
-          selectedConversation={currentConversation}
+          selectedConversation={selectedConversation}
           view={view}
           onStatusChange={handleStatusChange}
           onViewChat={handleViewChat}
@@ -165,7 +204,7 @@ const Layout = () => {
       <div className="chat-panel">
         <ChatView 
           selectedConversation={currentConversation}
-          chatHistory={currentChatHistory}
+          chatHistory={currentChatHistory as Message[]}
           view={view}
           onBack={handleBackToList}
           onSendMessage={handleSendMessage}
