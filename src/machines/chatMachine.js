@@ -1,13 +1,89 @@
 import { setup, assign, fromPromise } from 'xstate';
 import { chatStorage } from '../services/chatStorage';
 
-// Mock API response function - we'll keep this for now
-const mockApiResponse = async (message) => {
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  return {
-    text: `This is a mock response to: "${message}"`,
-    source: 'https://api.example.com/docs'
+const GRAPHQL_ENDPOINT = '/graphql';
+
+const sendGraphQLMessage = async (message) => {
+  const mutation = {
+    query: `
+      mutation {
+        sendMessage(postMessageRequest: {
+          sessionId: "guide-assist-visitor:8511ddaa-d324-4fc7-9004-0c71978411a6",
+          message: "${message}",
+          platform: "Guide-Page",
+          guide: {
+            displayName: "Ayush Garg",
+            userName: "agarg3",
+            location: "us",
+            costCenter: "us"
+          },
+          context: {
+            market: "en-US",
+            visitorId: ":8511ddaa-d324-4fc7-9004-0c71978411a6",
+            visitId: ":8511ddaa-d324-4fc7-9004-0c71978411a6",
+            trafficType: "visitor",
+            visitor: ":8511ddaa-d324-4fc7-9004-0c71978411a6",
+            shopper: null,
+            source: "guide-assist",
+            metadata: {
+              harnessed: false,
+              contactId: ":8511ddaa-d324-4fc7-9004-0c71978411a6",
+              source: "guide-assist"
+            }
+          },
+          bypassLLM: false
+        }) {
+          messages {
+            type
+            text
+            by
+          }
+          state
+          commands {
+            type
+            payload
+            by
+          }
+          metadata
+        }
+      }
+    `
   };
+
+  try {
+    console.log('Sending request to:', GRAPHQL_ENDPOINT);
+    const response = await fetch(GRAPHQL_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': '*/*'
+      },
+      credentials: 'include',
+      mode: 'cors',
+      body: JSON.stringify(mutation)
+    });
+
+    if (!response.ok) {
+      console.error('Response not OK:', {
+        status: response.status,
+        statusText: response.statusText,
+        headers: Object.fromEntries([...response.headers])
+      });
+      throw new Error(`Network response was not ok: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    console.log('Response data:', data);
+    const assistantMessage = data.data.sendMessage.messages.find(msg => msg.by === 'assistant');
+    
+    return {
+      text: assistantMessage?.text || 'No response from assistant',
+      source: null
+    };
+  } catch (error) {
+    console.error('GraphQL request failed:', error);
+    throw new Error(`Failed to fetch response: ${error.message}`);
+  }
 };
 
 const createMessage = (content, sender, source = null) => ({
@@ -21,7 +97,7 @@ const createMessage = (content, sender, source = null) => ({
 export const chatMachine = setup({
   actors: {
     fetchResponse: fromPromise(async ({ input }) => {
-      const response = await mockApiResponse(input.message);
+      const response = await sendGraphQLMessage(input.message);
       return response;
     }),
     loadStoredMessages: fromPromise(async ({ input }) => {
@@ -87,14 +163,7 @@ export const chatMachine = setup({
           target: 'awaiting_input',
           actions: [
             assign({
-              messages: ({ event, event: { type, ...eventData } }) => {
-                // If we have stored messages, use them
-                if (event.output.messages.length > 0) {
-                  return event.output.messages;
-                }
-                // Otherwise use the messages from the event
-                return eventData.messages || [];
-              },
+              messages: ({ event }) => event.output.messages || [],
               error: null,
               currentInput: '',
               isProcessing: false
@@ -106,7 +175,7 @@ export const chatMachine = setup({
           target: 'awaiting_input',
           actions: assign({
             error: ({ event }) => event.error,
-            messages: ({ event }) => event.messages || []
+            messages: []
           })
         }
       }
@@ -131,8 +200,8 @@ export const chatMachine = setup({
         CONVERSATION_SELECTED: {
           target: 'loading_messages',
           actions: [
-            'persistMessages', // Save current messages before switching
-            'clearMessages'  // Clear messages before loading new conversation
+            'persistMessages',
+            'clearMessages'
           ]
         }
       }
@@ -145,13 +214,14 @@ export const chatMachine = setup({
           conversationId: context.conversationId
         }),
         onDone: {
-          target: 'streaming_response',
+          target: 'awaiting_input',
           actions: [
             assign({
               messages: ({ context, event }) => [
                 ...context.messages,
                 createMessage(event.output.text, 'assistant', event.output.source)
-              ]
+              ],
+              isProcessing: false
             }),
             'notifyConversationUpdate',
             'persistMessages'
@@ -172,28 +242,8 @@ export const chatMachine = setup({
         CONVERSATION_SELECTED: {
           target: 'loading_messages',
           actions: [
-            'persistMessages', // Save current messages before switching
-            'clearMessages'  // Clear messages before loading new conversation
-          ]
-        }
-      }
-    },
-    streaming_response: {
-      entry: assign({ isProcessing: true }),
-      on: {
-        END_STREAMING: {
-          target: 'awaiting_input',
-          actions: [
-            assign({ isProcessing: false }),
-            'notifyConversationUpdate',
-            'persistMessages'
-          ]
-        },
-        CONVERSATION_SELECTED: {
-          target: 'loading_messages',
-          actions: [
-            'persistMessages', // Save current messages before switching
-            'clearMessages'  // Clear messages before loading new conversation
+            'persistMessages',
+            'clearMessages'
           ]
         }
       }
