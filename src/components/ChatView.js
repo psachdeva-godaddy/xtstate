@@ -7,7 +7,9 @@ const ChatView = ({
   chatHistory,
   view,
   onBack,
-  onSendMessage
+  onSendMessage,
+  isProcessing,
+  error
 }) => {
   return (
     <>
@@ -18,6 +20,8 @@ const ChatView = ({
           onBack={onBack}
           onSendMessage={view === 'history' ? undefined : onSendMessage}
           isHistoryView={view === 'history'}
+          isProcessing={isProcessing}
+          error={error}
         />
       ) : (
         <div className="welcome-message">

@@ -1,12 +1,52 @@
-import React from 'react';
+import React, { useCallback, useEffect } from 'react';
 import { useMachine } from '@xstate/react';
 import { conversationsMachine } from '../machines/conversationsMachine';
+import { chatMachine, chatEvents } from '../machines/chatMachine';
+import { chatStorage } from '../services/chatStorage';
 import ConversationsList from './ConversationsList';
 import ChatView from './ChatView';
 import './Layout.css';
 
 const Layout = () => {
-  const [snapshot, send] = useMachine(conversationsMachine);
+  const [conversationsSnapshot, sendToConversations] = useMachine(conversationsMachine);
+  const [chatSnapshot, sendToChat] = useMachine(chatMachine, {
+    context: {
+      onConversationUpdate: ({ conversationId, messages }) => {
+        // Update conversations machine with new messages
+        sendToConversations({ 
+          type: 'UPDATE_CONVERSATION_MESSAGES', 
+          conversationId, 
+          messages 
+        });
+      }
+    }
+  });
+
+  // Initialize conversations with stored messages
+  useEffect(() => {
+    const storedChats = chatStorage.getAllChats();
+    if (Object.keys(storedChats).length > 0) {
+      const updatedConversations = conversationsSnapshot.context.activeConversations.map(conv => {
+        const storedMessages = storedChats[conv.ucid];
+        if (storedMessages) {
+          return {
+            ...conv,
+            currentChat: {
+              ...conv.currentChat,
+              messages: storedMessages
+            }
+          };
+        }
+        return conv;
+      });
+
+      sendToConversations({
+        type: 'UPDATE_ACTIVE_CONVERSATIONS',
+        conversations: updatedConversations
+      });
+    }
+  }, []);
+
   const { 
     activeConversations, 
     historyConversations, 
@@ -14,7 +54,7 @@ const Layout = () => {
     selectedChatHistory,
     selectedHistoryChat,
     view 
-  } = snapshot.context;
+  } = conversationsSnapshot.context;
 
   console.log('Layout render:', {
     view,
@@ -22,61 +62,88 @@ const Layout = () => {
     selectedConversation,
     selectedChatHistory,
     selectedHistoryChat,
-    state: snapshot.value
+    state: conversationsSnapshot.value,
+    chatState: chatSnapshot.value,
+    currentMessages: chatSnapshot.context.messages,
+    storedChats: chatStorage.getAllChats()
   });
 
   const handleStatusChange = (ucid, status) => {
-    send({ type: 'CHANGE_STATUS', ucid, status });
+    sendToConversations({ type: 'CHANGE_STATUS', ucid, status });
   };
 
   const handleViewHistory = (customerId) => {
     console.log('Viewing history for customer:', customerId);
-    send({ type: 'CONTACT_HISTORY_CLICK', customerId });
+    sendToConversations({ type: 'CONTACT_HISTORY_CLICK', customerId });
   };
 
   const handleBackToActive = () => {
-    send({ type: 'CONTACT_HISTORY_BACK_CLICK' });
+    sendToConversations({ type: 'CONTACT_HISTORY_BACK_CLICK' });
   };
 
   const handleViewChat = (conversation) => {
     console.log('Viewing chat:', conversation);
-    send({ 
+    
+    // First update conversations machine
+    sendToConversations({ 
       type: 'VIEW_CHAT_HISTORY', 
       conversation: {
         ...conversation,
-        currentChat: view === 'history' ? { messages: conversation.messages } : conversation.currentChat
+        currentChat: view === 'history' ? 
+          { messages: conversation.messages } : 
+          conversation.currentChat
       }
     });
+    
+    // Then update chat machine with the conversation
+    const storedMessages = chatStorage.getChat(conversation.ucid);
+    const messages = storedMessages.length > 0 ? 
+      storedMessages : 
+      (view === 'history' ? 
+        conversation.messages : 
+        (conversation.currentChat?.messages || []));
+    
+    sendToChat(chatEvents.selectConversation(
+      conversation.ucid,
+      messages
+    ));
   };
 
   const handleBackToList = () => {
-    send({ type: 'BACK_TO_LIST' });
+    // Current messages are automatically persisted by the chat machine
+    sendToConversations({ type: 'BACK_TO_LIST' });
   };
 
-  const handleSendMessage = (message) => {
-    send({ 
-      type: 'ADD_CHAT_MESSAGE', 
-      message,
-      sender: 'agent'
-    });
-  };
+  const handleSendMessage = useCallback((message) => {
+    sendToChat(chatEvents.sendMessage(message));
+  }, [sendToChat]);
 
   const handleRefresh = () => {
-    send({ type: 'REFRESH' });
+    // Clear stored chats when refreshing
+    chatStorage.clearAll();
+    sendToConversations({ type: 'REFRESH' });
   };
 
   const handleNewContact = () => {
-    send({ type: 'NEW_CONTACT' });
+    sendToConversations({ type: 'NEW_CONTACT' });
   };
 
-  if (snapshot.matches('initializing')) {
+  if (conversationsSnapshot.matches('initializing')) {
     return <div className="loading">Loading conversations...</div>;
   }
 
   const currentConversation = view === 'history' ? selectedHistoryChat : selectedConversation;
-  const currentChatHistory = view === 'history' ? 
-    (selectedHistoryChat?.messages || []) : 
-    (selectedChatHistory || []);
+  
+  // Use chat machine messages if available, otherwise use stored messages
+  const currentChatHistory = chatSnapshot.context.messages.length > 0 ? 
+    chatSnapshot.context.messages : 
+    (currentConversation?.ucid ? 
+      chatStorage.getChat(currentConversation.ucid) : 
+      (view === 'history' ? 
+        (selectedHistoryChat?.messages || []) : 
+        (selectedChatHistory || [])));
+
+  const isProcessing = chatSnapshot.context.isProcessing;
 
   return (
     <div className="app-container">
@@ -92,7 +159,7 @@ const Layout = () => {
           onBackToActive={handleBackToActive}
           onRefresh={handleRefresh}
           onNewContact={handleNewContact}
-          error={snapshot.context.error}
+          error={conversationsSnapshot.context.error}
         />
       </div>
       <div className="chat-panel">
@@ -102,6 +169,8 @@ const Layout = () => {
           view={view}
           onBack={handleBackToList}
           onSendMessage={handleSendMessage}
+          isProcessing={isProcessing}
+          error={chatSnapshot.context.error}
         />
       </div>
     </div>
