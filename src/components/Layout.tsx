@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useMachine } from '@xstate/react';
 import { conversationsMachine, Conversation, HistoryConversation } from '../machines/conversationsMachine';
 import { chatMachine } from '../machines/chatMachine';
@@ -38,33 +38,49 @@ interface ConversationWithChat extends Conversation {
   currentChat?: CurrentChat;
 }
 
-const Layout: React.FC = () => {
+export const Layout = () => {
   const [conversationsSnapshot, sendToConversations] = useMachine(conversationsMachine);
   const [chatSnapshot, sendToChat] = useMachine(chatMachine);
+  const [isInitializing, setIsInitializing] = useState(true);
 
-  // Initialize conversations with stored messages
   useEffect(() => {
-    const storedChats = chatStorage.getAllChats();
-    if (Object.keys(storedChats).length > 0) {
-      const updatedConversations = conversationsSnapshot.context.activeConversations.map(conv => {
-        const storedMessages = storedChats[conv.ucid];
-        if (storedMessages) {
-          return {
-            ...conv,
-            currentChat: {
-              messages: storedMessages
-            }
-          };
-        }
-        return conv;
-      });
+    const initializeConversations = async () => {
+      try {
+        // First, send the initial conversations
+        sendToConversations({
+          type: 'UPDATE_ACTIVE_CONVERSATIONS',
+          conversations: mockData.active
+        });
 
-      sendToConversations({
-        type: 'UPDATE_ACTIVE_CONVERSATIONS',
-        conversations: updatedConversations
-      });
-    }
-  }, []);
+        // Then load stored chats
+        const storedChats = await chatStorage.getAllChats();
+        if (Object.keys(storedChats).length > 0) {
+          const updatedConversations = mockData.active.map(conv => {
+            const storedMessages = storedChats[conv.ucid];
+            if (storedMessages) {
+              return {
+                ...conv,
+                messages: storedMessages,
+                updated: new Date(storedMessages[storedMessages.length - 1]?.timestamp || conv.updated).toLocaleTimeString()
+              };
+            }
+            return conv;
+          });
+
+          sendToConversations({
+            type: 'UPDATE_ACTIVE_CONVERSATIONS',
+            conversations: updatedConversations
+          });
+        }
+      } catch (error) {
+        console.error('Error initializing conversations:', error);
+      } finally {
+        setIsInitializing(false);
+      }
+    };
+
+    initializeConversations();
+  }, [sendToConversations]);
 
   const { 
     activeConversations, 
@@ -75,73 +91,128 @@ const Layout: React.FC = () => {
     view 
   } = conversationsSnapshot.context;
 
-  console.log('Layout render:', {
-    view,
-    historyConversations,
-    selectedConversation,
-    selectedChatHistory,
-    selectedHistoryChat,
-    state: conversationsSnapshot.value,
-    chatState: chatSnapshot.value,
-    currentMessages: chatSnapshot.context.messages,
-    storedChats: chatStorage.getAllChats()
-  });
-
   const handleStatusChange = (ucid: string, status: string) => {
-    // Status change is not currently supported in the state machine
     console.log('Status change not implemented:', { ucid, status });
   };
 
   const handleViewHistory = (customerId: string) => {
     console.log('Viewing history for customer:', customerId);
+    // Clear chat machine state when viewing history
+    sendToChat({
+      type: 'CONVERSATION_SELECTED',
+      conversationId: null
+    });
     sendToConversations({ type: 'CONTACT_HISTORY_CLICK', customerId });
   };
 
   const handleBackToActive = () => {
+    // Clear chat machine state when going back to active
+    sendToChat({
+      type: 'CONVERSATION_SELECTED',
+      conversationId: null
+    });
     sendToConversations({ type: 'CONTACT_HISTORY_BACK_CLICK' });
   };
 
-  const handleViewChat = (conversation: Conversation | HistoryConversation) => {
-    console.log('Viewing chat:', conversation);
-    
-    // First update conversations machine
-    sendToConversations({ 
-      type: 'VIEW_CHAT_HISTORY', 
-      conversation
-    });
-    
-    // Then update chat machine with the conversation
-    const conversationId = 'ucid' in conversation ? conversation.ucid : conversation.id;
-    const storedMessages = chatStorage.getChat(conversationId);
-    const messages = storedMessages.length > 0 ? 
-      storedMessages : 
-      (view === 'history' && 'messages' in conversation ? 
-        conversation.messages : 
-        []);
-    
-    sendToChat({ 
-      type: 'CONVERSATION_SELECTED',
-      conversationId
-    });
+  const handleViewChatHistory = async (conversation: Conversation | HistoryConversation) => {
+    try {
+      const conversationId = 'ucid' in conversation ? conversation.ucid : conversation.id;
+      
+      // First update conversations machine
+      sendToConversations({
+        type: 'VIEW_CHAT_HISTORY',
+        conversation
+      });
+
+      // Then update chat machine with the conversation
+      sendToChat({ 
+        type: 'CONVERSATION_SELECTED',
+        conversationId
+      });
+
+      // Load stored messages for history conversations
+      if (!('ucid' in conversation)) {
+        const storedMessages = await chatStorage.getChat(conversationId);
+        if (storedMessages.length > 0) {
+          sendToConversations({
+            type: 'UPDATE_CONVERSATION_MESSAGES',
+            conversationId,
+            messages: storedMessages
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error viewing chat history:', error);
+    }
   };
+
+  const handleSendMessage = useCallback(async (message: string) => {
+    console.log('Sending message:', message);
+    if (!selectedConversation && !selectedHistoryChat) return;
+
+    const conversation = selectedConversation || selectedHistoryChat;
+    if (!conversation) return;
+
+    const conversationId = 'ucid' in conversation ? conversation.ucid : conversation.id;
+    
+    // Send to chat machine to process the message
+    sendToChat({ 
+      type: 'RECEIVED_INPUT', 
+      message
+    });
+
+  }, [sendToChat, selectedConversation, selectedHistoryChat]);
+
+  // Add effect to handle chat machine state changes
+  useEffect(() => {
+    const lastMessage = chatSnapshot.context.messages[chatSnapshot.context.messages.length - 1];
+    if (!lastMessage || !chatSnapshot.context.conversationId) return;
+
+    // Only update conversations machine when there's a new message
+    sendToConversations({
+      type: 'UPDATE_CONVERSATION_MESSAGES',
+      conversationId: chatSnapshot.context.conversationId,
+      messages: chatSnapshot.context.messages
+    });
+
+  }, [chatSnapshot.context.messages, chatSnapshot.context.conversationId, sendToConversations]);
+
+  // Add effect to sync selected conversation with chat machine
+  useEffect(() => {
+    if (selectedConversation) {
+      sendToChat({
+        type: 'CONVERSATION_SELECTED',
+        conversationId: selectedConversation.ucid
+      });
+    } else if (selectedHistoryChat) {
+      sendToChat({
+        type: 'CONVERSATION_SELECTED',
+        conversationId: selectedHistoryChat.id
+      });
+    }
+  }, [selectedConversation, selectedHistoryChat, sendToChat]);
 
   const handleBackToList = () => {
-    // Current messages are automatically persisted by the chat machine
-    sendToConversations({ type: 'BACK_TO_LIST' });
+    // Clear both machines' states
+    sendToConversations({
+      type: 'BACK_TO_LIST'
+    });
+    sendToChat({
+      type: 'CONVERSATION_SELECTED',
+      conversationId: null
+    });
   };
 
-  const handleSendMessage = useCallback((message: string) => {
-    sendToChat({ type: 'RECEIVED_INPUT', message });
-  }, [sendToChat]);
-
-  const handleRefresh = () => {
-    // Clear stored chats when refreshing
-    chatStorage.clearAll();
-    // Fetch active conversations again
-    sendToConversations({ 
-      type: 'UPDATE_ACTIVE_CONVERSATIONS', 
-      conversations: mockData.active 
-    });
+  const handleRefresh = async () => {
+    try {
+      await chatStorage.clearAll();
+      sendToConversations({ 
+        type: 'UPDATE_ACTIVE_CONVERSATIONS', 
+        conversations: mockData.active 
+      });
+    } catch (error) {
+      console.error('Error refreshing conversations:', error);
+    }
   };
 
   const handleNewContact = () => {
@@ -154,34 +225,23 @@ const Layout: React.FC = () => {
       updated: new Date().toLocaleTimeString()
     };
 
-    // Add the new conversation to active conversations
     sendToConversations({ 
       type: 'UPDATE_ACTIVE_CONVERSATIONS',
       conversations: [...activeConversations, newConversation]
     });
 
-    // Select the new conversation
-    sendToConversations({ 
-      type: 'VIEW_CHAT_HISTORY',
-      conversation: newConversation
-    });
+    handleViewChatHistory(newConversation);
   };
 
-  if (conversationsSnapshot.matches('initializing')) {
-    return <div className="loading">Loading conversations...</div>;
+  if (isInitializing || conversationsSnapshot.matches('initializing')) {
+    return <div className="loading-container">Loading conversations...</div>;
   }
 
   const currentConversation = view === 'history' ? selectedHistoryChat : selectedConversation;
-  
-  // Use chat machine messages if available, otherwise use stored messages
+  // Use selectedChatHistory as fallback when switching views
   const currentChatHistory = chatSnapshot.context.messages.length > 0 ? 
     chatSnapshot.context.messages : 
-    (currentConversation ? 
-      ('ucid' in currentConversation ? 
-        chatStorage.getChat(currentConversation.ucid) : 
-        currentConversation.messages) : 
-      []);
-
+    selectedChatHistory;
   const isProcessing = chatSnapshot.context.isProcessing;
 
   return (
@@ -193,7 +253,7 @@ const Layout: React.FC = () => {
           selectedConversation={selectedConversation}
           view={view}
           onStatusChange={handleStatusChange}
-          onViewChat={handleViewChat}
+          onViewChat={handleViewChatHistory}
           onViewHistory={handleViewHistory}
           onBackToActive={handleBackToActive}
           onRefresh={handleRefresh}
@@ -204,7 +264,7 @@ const Layout: React.FC = () => {
       <div className="chat-panel">
         <ChatView 
           selectedConversation={currentConversation}
-          chatHistory={currentChatHistory as Message[]}
+          chatHistory={currentChatHistory}
           view={view}
           onBack={handleBackToList}
           onSendMessage={handleSendMessage}

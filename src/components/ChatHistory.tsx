@@ -41,12 +41,18 @@ const ChatHistory: React.FC<ChatHistoryProps> = ({
     return 'Customer';
   };
 
-  const getCustomerId = (conv: Conversation | HistoryConversation) => {
-    if ('customerId' in conv) {
+  const getCustomerId = (conv: Conversation | HistoryConversation): string => {
+    if ('ucid' in conv) {
       return conv.customerId;
     }
-    // For history conversations, we might want to use the id field
-    return conv.id;
+    return conv.customerId;
+  };
+
+  const getStatus = (conv: Conversation | HistoryConversation): string => {
+    if ('state' in conv) {
+      return conv.state;
+    }
+    return conv.status || 'Unknown';
   };
 
   return (
@@ -59,7 +65,7 @@ const ChatHistory: React.FC<ChatHistoryProps> = ({
           <h2>{getCustomerName(conversation)}</h2>
           <div className="chat-customer-details">
             <span>ID: {getCustomerId(conversation)}</span>
-            <span>Status: {'state' in conversation ? conversation.state : conversation.status}</span>
+            <span>Status: {getStatus(conversation)}</span>
           </div>
         </div>
       </div>

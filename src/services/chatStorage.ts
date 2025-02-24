@@ -4,14 +4,17 @@ interface ChatStore {
   [conversationId: string]: Message[];
 }
 
-const CHAT_STORAGE_KEY = 'chat_messages_store';
+const API_BASE_URL = 'http://localhost:3001/api';
 
 export const chatStorage = {
   // Get all stored chats
-  getAllChats: (): ChatStore => {
+  getAllChats: async (): Promise<ChatStore> => {
     try {
-      const stored = localStorage.getItem(CHAT_STORAGE_KEY);
-      return stored ? JSON.parse(stored) : {};
+      const response = await fetch(`${API_BASE_URL}/chats`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch chats');
+      }
+      return await response.json();
     } catch (error) {
       console.error('Error reading chat storage:', error);
       return {};
@@ -19,11 +22,13 @@ export const chatStorage = {
   },
 
   // Get messages for a specific conversation
-  getChat: (conversationId: string): Message[] => {
+  getChat: async (conversationId: string): Promise<Message[]> => {
     try {
-      const stored = localStorage.getItem(CHAT_STORAGE_KEY);
-      const chats: ChatStore = stored ? JSON.parse(stored) : {};
-      return chats[conversationId] || [];
+      const response = await fetch(`${API_BASE_URL}/chats/${conversationId}`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch chat');
+      }
+      return await response.json();
     } catch (error) {
       console.error('Error reading chat:', error);
       return [];
@@ -31,12 +36,20 @@ export const chatStorage = {
   },
 
   // Update messages for a specific conversation
-  updateChat: (conversationId: string, messages: Message[]): boolean => {
+  updateChat: async (conversationId: string, messages: Message[]): Promise<boolean> => {
     try {
-      const stored = localStorage.getItem(CHAT_STORAGE_KEY);
-      const chats: ChatStore = stored ? JSON.parse(stored) : {};
-      chats[conversationId] = messages;
-      localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(chats));
+      const response = await fetch(`${API_BASE_URL}/chats/${conversationId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ messages }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to update chat');
+      }
+      
       return true;
     } catch (error) {
       console.error('Error updating chat:', error);
@@ -45,9 +58,16 @@ export const chatStorage = {
   },
 
   // Clear all stored chats
-  clearAll: (): boolean => {
+  clearAll: async (): Promise<boolean> => {
     try {
-      localStorage.removeItem(CHAT_STORAGE_KEY);
+      const response = await fetch(`${API_BASE_URL}/chats`, {
+        method: 'DELETE',
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to clear chats');
+      }
+      
       return true;
     } catch (error) {
       console.error('Error clearing chats:', error);

@@ -41,7 +41,7 @@ interface GraphQLResponse {
 }
 
 type ChatEvent =
-  | { type: 'CONVERSATION_SELECTED'; conversationId: string }
+  | { type: 'CONVERSATION_SELECTED'; conversationId: string | null }
   | { type: 'RECEIVED_INPUT'; message: string };
 
 const sendGraphQLMessage = async (message: string): Promise<{ text: string; source: null }> => {
@@ -146,8 +146,12 @@ export const chatMachine = setup({
       return response;
     }),
     loadStoredMessages: fromPromise(async ({ input }: { input: { conversationId: string } }) => {
-      const messages = chatStorage.getChat(input.conversationId);
+      const messages = await chatStorage.getChat(input.conversationId);
       return { messages };
+    }),
+    persistMessages: fromPromise(async ({ input }: { input: { conversationId: string; messages: Message[] } }) => {
+      await chatStorage.updateChat(input.conversationId, input.messages);
+      return { success: true };
     })
   },
   actions: {
@@ -160,11 +164,6 @@ export const chatMachine = setup({
           lastMessage: context.messages[context.messages.length - 1],
           timestamp: new Date().toISOString()
         });
-      }
-    },
-    persistMessages: ({ context }) => {
-      if (context.conversationId && context.messages.length > 0) {
-        chatStorage.updateChat(context.conversationId, context.messages);
       }
     },
     clearMessages: assign({
@@ -188,22 +187,28 @@ export const chatMachine = setup({
   states: {
     idle: {
       on: {
-        CONVERSATION_SELECTED: {
-          target: 'loading_messages',
-          actions: ['clearMessages']
-        }
+        CONVERSATION_SELECTED: [
+          {
+            guard: ({ event }) => event.conversationId !== null,
+            target: 'loading_messages',
+            actions: ['clearMessages']
+          },
+          {
+            target: 'idle',
+            actions: ['clearMessages']
+          }
+        ]
       }
     },
     loading_messages: {
       entry: assign({
         conversationId: ({ event }) => 
-          'conversationId' in event ? event.conversationId : null,
-        messages: []
+          'conversationId' in event ? event.conversationId : null
       }),
       invoke: {
         src: 'loadStoredMessages',
-        input: ({ event }) => ({
-          conversationId: 'conversationId' in event ? event.conversationId : ''
+        input: ({ context }) => ({
+          conversationId: context.conversationId || ''
         }),
         onDone: {
           target: 'awaiting_input',
@@ -213,8 +218,7 @@ export const chatMachine = setup({
               error: null,
               currentInput: '',
               isProcessing: false
-            }),
-            'notifyConversationUpdate'
+            })
           ]
         },
         onError: {
@@ -238,18 +242,20 @@ export const chatMachine = setup({
                 createMessage(event.message, 'user')
               ],
               isProcessing: true
-            }),
-            'notifyConversationUpdate',
-            'persistMessages'
+            })
           ]
         },
-        CONVERSATION_SELECTED: {
-          target: 'loading_messages',
-          actions: [
-            'persistMessages',
-            'clearMessages'
-          ]
-        }
+        CONVERSATION_SELECTED: [
+          {
+            guard: ({ event }) => event.conversationId !== null,
+            target: 'loading_messages',
+            actions: ['clearMessages']
+          },
+          {
+            target: 'idle',
+            actions: ['clearMessages']
+          }
+        ]
       }
     },
     awaiting_response: {
@@ -260,7 +266,7 @@ export const chatMachine = setup({
           conversationId: context.conversationId
         }),
         onDone: {
-          target: 'awaiting_input',
+          target: 'persisting_messages',
           actions: [
             assign({
               messages: ({ context, event }) => [
@@ -268,9 +274,7 @@ export const chatMachine = setup({
                 createMessage(event.output.text, 'assistant', event.output.source)
               ],
               isProcessing: false
-            }),
-            'notifyConversationUpdate',
-            'persistMessages'
+            })
           ]
         },
         onError: {
@@ -279,18 +283,39 @@ export const chatMachine = setup({
             assign({
               error: ({ event }) => event.error instanceof Error ? event.error : new Error('Unknown error'),
               isProcessing: false
-            }),
-            'notifyConversationUpdate'
+            })
           ]
         }
       },
       on: {
-        CONVERSATION_SELECTED: {
-          target: 'loading_messages',
-          actions: [
-            'persistMessages',
-            'clearMessages'
-          ]
+        CONVERSATION_SELECTED: [
+          {
+            guard: ({ event }) => event.conversationId !== null,
+            target: 'loading_messages',
+            actions: ['clearMessages']
+          },
+          {
+            target: 'idle',
+            actions: ['clearMessages']
+          }
+        ]
+      }
+    },
+    persisting_messages: {
+      invoke: {
+        src: 'persistMessages',
+        input: ({ context }) => ({
+          conversationId: context.conversationId || '',
+          messages: context.messages
+        }),
+        onDone: {
+          target: 'awaiting_input'
+        },
+        onError: {
+          target: 'awaiting_input',
+          actions: assign({
+            error: ({ event }) => event.error instanceof Error ? event.error : new Error('Unknown error')
+          })
         }
       }
     }

@@ -44,20 +44,18 @@ const NavigationList: React.FC<NavigationListProps> = ({
               historyConversations.map((chat) => (
                 <div 
                   key={chat.id} 
-                  className={`conversation-card ${selectedConversation?.customerId === chat.id ? 'active' : ''}`}
-                  onClick={() => onViewChat({
-                    ...chat,
-                    ucid: chat.id,
-                    state: 'COMPLETED'
-                  })}
+                  className={`conversation-card ${selectedConversation?.customerId === chat.customerId ? 'active' : ''}`}
+                  onClick={() => onViewChat(chat)}
                 >
                   <div className="history-card-header">
-                    <div className="history-date">Date: {chat.date}</div>
+                    <div className="history-date">Date: {new Date(chat.date).toLocaleString()}</div>
                   </div>
                   <div className="history-preview">
                     {chat.messages && chat.messages.length > 0 && (
                       <div className="preview-message">
-                        <span className="message-text">{chat.messages[0].content}</span>
+                        <span className="message-text">
+                          {chat.customerName} - {chat.messages[0].content}
+                        </span>
                         <span className="message-count">{chat.messages.length} messages</span>
                       </div>
                     )}
@@ -172,6 +170,37 @@ const ConversationsList: React.FC<ConversationsListProps> = ({
         </div>
       )}
     </>
+  );
+};
+
+const HistoryList: React.FC<{
+  historyConversations: HistoryConversation[];
+  onViewChat: (conversation: HistoryConversation) => void;
+}> = ({ historyConversations, onViewChat }) => {
+  return (
+    <div className="history-list">
+      {historyConversations.map(chat => (
+        <div
+          key={chat.id}
+          className="history-card"
+          onClick={() => onViewChat(chat)}
+        >
+          <div className="history-card-header">
+            <div className="history-date">Date: {new Date(chat.date).toLocaleString()}</div>
+          </div>
+          <div className="history-preview">
+            <div className="preview-message">
+              <span className="message-text">
+                {chat.customerName} - {chat.messages?.[0]?.content || 'No messages'}
+              </span>
+              <span className="message-count">
+                {chat.messages?.length || 0} messages
+              </span>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
   );
 };
 
