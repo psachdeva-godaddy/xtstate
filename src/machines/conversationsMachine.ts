@@ -7,6 +7,7 @@ export interface Conversation {
   state: string;
   customerName: string;
   customerId: string;
+  shopperId: string;  // 6-digit unique number
   opened: string;
   updated: string;
 }
@@ -22,6 +23,38 @@ export interface HistoryConversation {
 }
 
 type ViewState = 'active' | 'history';
+
+// Mock data that simulates API response - will be replaced with actual API calls later
+const mockData = {
+  active: [
+    {
+      ucid: "123e4567-56-426614174000",
+      state: "IN_PROGRESS",
+      customerName: "John Doe",
+      customerId: "1234",
+      shopperId: "123456",
+      opened: new Date().toLocaleTimeString(),
+      updated: new Date().toLocaleTimeString()
+    },
+    {
+      ucid: "123e4567-56-426614171000",
+      state: "IN_PROGRESS",
+      customerName: "Pranav Sachdeva",
+      customerId: "1235",
+      shopperId: "789012",
+      opened: new Date().toLocaleTimeString(),
+      updated: new Date().toLocaleTimeString()
+    }
+  ] as Conversation[]
+};
+
+// This will be replaced with actual API call later
+const fetchActiveConversations = async () => {
+  console.log('Fetching active conversations...');
+  // Simulate API delay
+  await new Promise(resolve => setTimeout(resolve, 100));
+  return mockData.active;
+};
 
 interface ConversationsContext {
   activeConversations: Conversation[];
@@ -41,32 +74,11 @@ type ConversationsEvent =
   | { type: 'CONTACT_HISTORY_CLICK'; customerId: string }
   | { type: 'CONTACT_HISTORY_BACK_CLICK' }
   | { type: 'VIEW_CHAT_HISTORY'; conversation: Conversation | HistoryConversation }
-  | { type: 'BACK_TO_LIST' };
+  | { type: 'BACK_TO_LIST' }
+  | { type: 'REFRESH_CONVERSATIONS' };
 
 const isViewChatHistoryEvent = (event: ConversationsEvent): event is { type: 'VIEW_CHAT_HISTORY'; conversation: Conversation | HistoryConversation } => {
   return event.type === 'VIEW_CHAT_HISTORY';
-};
-
-// Simplified mock data - only conversation card details
-let mockData = {
-  active: [
-    {
-      ucid: "123e4567-56-426614174000",
-      state: "IN_PROGRESS",
-      customerName: "John Doe",
-      customerId: "1234",
-      opened: new Date().toLocaleTimeString(),
-      updated: new Date().toLocaleTimeString()
-    },
-    {
-      ucid: "123e4567-56-426614171000",
-      state: "IN_PROGRESS",
-      customerName: "Pranav Sachdeva",
-      customerId: "1235",
-      opened: new Date().toLocaleTimeString(),
-      updated: new Date().toLocaleTimeString()
-    }
-  ] as Conversation[]
 };
 
 // Helper to get chat history for a customer
@@ -106,19 +118,16 @@ export const conversationsMachine = setup({
   },
   actors: {
     fetchActiveConversations: fromPromise(async () => {
-      console.log('Starting to fetch active conversations...');
-      // Update mockData.active with any stored conversations
+      const conversations = await fetchActiveConversations();
+      // Update stored chats
       const storedChats = await chatStorage.getAllChats();
-      const updatedActive = mockData.active.map(conv => ({
+      const updatedConversations = conversations.map(conv => ({
         ...conv,
         updated: storedChats[conv.ucid] ? 
           new Date((storedChats[conv.ucid] as Message[])[0]?.timestamp || Date.now()).toLocaleTimeString() :
           conv.updated
       }));
-      
-      const result = { conversations: updatedActive };
-      console.log('Fetched active conversations:', result);
-      return result;
+      return { conversations: updatedConversations };
     }),
     fetchHistoryConversations: fromPromise(async ({ input }: { input: { customerId: string } }) => {
       console.log('Fetching history for customer:', input.customerId);

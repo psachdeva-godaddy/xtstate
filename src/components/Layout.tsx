@@ -2,33 +2,13 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useMachine } from '@xstate/react';
 import { conversationsMachine, Conversation, HistoryConversation } from '../machines/conversationsMachine';
 import { chatMachine } from '../machines/chatMachine';
+import { staticCardsMachine } from '../machines/staticCardsMachine';
 import { chatStorage } from '../services/chatStorage';
 import { Message } from '../machines/types';
 import ConversationsList from './ConversationsList';
 import ChatView from './ChatView';
+import { StaticCards } from './StaticCards';
 import './Layout.css';
-
-// Mock data for active conversations
-const mockData = {
-  active: [
-    {
-      ucid: "123e4567-56-426614174000",
-      state: "IN_PROGRESS",
-      customerName: "John Doe",
-      customerId: "1234",
-      opened: new Date().toLocaleTimeString(),
-      updated: new Date().toLocaleTimeString()
-    },
-    {
-      ucid: "123e4567-56-426614171000",
-      state: "IN_PROGRESS",
-      customerName: "Pranav Sachdeva",
-      customerId: "1235",
-      opened: new Date().toLocaleTimeString(),
-      updated: new Date().toLocaleTimeString()
-    }
-  ] as Conversation[]
-};
 
 interface CurrentChat {
   messages: Message[];
@@ -41,37 +21,14 @@ interface ConversationWithChat extends Conversation {
 export const Layout = () => {
   const [conversationsSnapshot, sendToConversations] = useMachine(conversationsMachine);
   const [chatSnapshot, sendToChat] = useMachine(chatMachine);
+  const [staticCardsSnapshot, sendToStaticCards] = useMachine(staticCardsMachine);
   const [isInitializing, setIsInitializing] = useState(true);
 
   useEffect(() => {
     const initializeConversations = async () => {
       try {
-        // First, send the initial conversations
-        sendToConversations({
-          type: 'UPDATE_ACTIVE_CONVERSATIONS',
-          conversations: mockData.active
-        });
-
-        // Then load stored chats
-        const storedChats = await chatStorage.getAllChats();
-        if (Object.keys(storedChats).length > 0) {
-          const updatedConversations = mockData.active.map(conv => {
-            const storedMessages = storedChats[conv.ucid];
-            if (storedMessages) {
-              return {
-                ...conv,
-                messages: storedMessages,
-                updated: new Date(storedMessages[storedMessages.length - 1]?.timestamp || conv.updated).toLocaleTimeString()
-              };
-            }
-            return conv;
-          });
-
-          sendToConversations({
-            type: 'UPDATE_ACTIVE_CONVERSATIONS',
-            conversations: updatedConversations
-          });
-        }
+        // Trigger the conversations machine to fetch initial data
+        sendToConversations({ type: 'REFRESH_CONVERSATIONS' });
       } catch (error) {
         console.error('Error initializing conversations:', error);
       } finally {
@@ -90,6 +47,18 @@ export const Layout = () => {
     selectedHistoryChat,
     view 
   } = conversationsSnapshot.context;
+
+  // Update static cards when conversation changes
+  useEffect(() => {
+    if (selectedConversation) {
+      sendToStaticCards({
+        type: 'SELECT_SHOPPER',
+        shopperId: selectedConversation.shopperId
+      });
+    } else {
+      sendToStaticCards({ type: 'CLEAR_CARDS' });
+    }
+  }, [selectedConversation, sendToStaticCards]);
 
   const handleStatusChange = (ucid: string, status: string) => {
     console.log('Status change not implemented:', { ucid, status });
@@ -206,10 +175,7 @@ export const Layout = () => {
   const handleRefresh = async () => {
     try {
       await chatStorage.clearAll();
-      sendToConversations({ 
-        type: 'UPDATE_ACTIVE_CONVERSATIONS', 
-        conversations: mockData.active 
-      });
+      sendToConversations({ type: 'REFRESH_CONVERSATIONS' });
     } catch (error) {
       console.error('Error refreshing conversations:', error);
     }
@@ -221,6 +187,7 @@ export const Layout = () => {
       state: 'NEW',
       customerName: 'New Contact',
       customerId: `cust_${Date.now()}`,
+      shopperId: `${Math.floor(100000 + Math.random() * 900000)}`, // Generate random 6-digit number
       opened: new Date().toLocaleTimeString(),
       updated: new Date().toLocaleTimeString()
     };
@@ -270,6 +237,13 @@ export const Layout = () => {
           onSendMessage={handleSendMessage}
           isProcessing={isProcessing}
           error={chatSnapshot.context.error}
+        />
+      </div>
+      <div className="static-cards-panel">
+        <StaticCards 
+          cards={staticCardsSnapshot.context.cards}
+          isLoading={staticCardsSnapshot.context.isLoading}
+          error={staticCardsSnapshot.context.error}
         />
       </div>
     </div>
